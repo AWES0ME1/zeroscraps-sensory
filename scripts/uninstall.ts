@@ -16,8 +16,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-import { Client } from '../node_modules/.prisma/sensory-client/runtime/library';
-import { PrismaClient } from '../node_modules/.prisma/sensory-client';
+import { Client } from '../prisma/generated/client/runtime/library';
+import { PrismaClient } from '../prisma/generated/client';
 
 async function main() {
   const force = process.argv.includes('--force');

@@ -12,7 +12,7 @@ import path from 'path';
 import fs from 'fs';
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-import { PrismaClient } from '../node_modules/.prisma/sensory-client';
+import { PrismaClient } from '../prisma/generated/client';
 
 async function main() {
   const args = process.argv.slice(2);

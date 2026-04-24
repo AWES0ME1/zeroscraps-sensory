@@ -5,7 +5,7 @@
  * Connects to the SAME database as the host but only sees its own tables.
  */
 
-import { PrismaClient } from '../../node_modules/.prisma/sensory-client';
+import { PrismaClient } from '../../prisma/generated/client';
 
 let instance: PrismaClient | null = null;
 
@@ -40,4 +40,4 @@ export async function disconnectPrisma(): Promise<void> {
 }
 
 // Re-export the client type for downstream modules.
-export type { PrismaClient } from '../../node_modules/.prisma/sensory-client';
+export type { PrismaClient } from '../../prisma/generated/client';

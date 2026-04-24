@@ -6,9 +6,9 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist/**/*",
-    "prisma/**/*",
+    "prisma/schema.prisma",
+    "prisma/generated/**/*",
     "migrations/**/*",
-    "scripts/**/*",
     "docs/**/*",
     "README.md",
     "INSTALL.md",
@@ -34,6 +34,7 @@
     "lint": "eslint src/ --ext .ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "echo 'TODO: tests' && exit 0",
+    "prepare": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json",
     "prepublishOnly": "npm run typecheck && npm run build"
   },
   "keywords": [
@@ -49,7 +50,6 @@
   ],
   "author": "ZeroScraps",
   "license": "UNLICENSED",
-  "private": true,
   "peerDependencies": {
     "express": "^5.0.0"
   },
@@ -57,12 +57,12 @@
     "@prisma/client": "^6.19.3",
     "dotenv": "^16.4.5",
     "openai": "^4.70.0",
-    "pino": "^9.5.0"
+    "pino": "^9.5.0",
+    "prisma": "^6.19.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.5.0",
-    "prisma": "^6.19.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.3"
   },

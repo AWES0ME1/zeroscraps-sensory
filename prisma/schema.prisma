@@ -14,7 +14,7 @@
 
 generator client {
   provider        = "prisma-client-js"
-  output          = "../node_modules/.prisma/sensory-client"
+  output          = "./generated/client"
   previewFeatures = ["postgresqlExtensions"]
 }
 

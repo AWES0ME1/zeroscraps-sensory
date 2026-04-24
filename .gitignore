@@ -1,18 +1,9 @@
 node_modules/
 dist/
-*.log
 .env
 .env.local
 .env.*.local
-.DS_Store
 *.tsbuildinfo
-coverage/
 
-# Prisma generated client (keep schema, regenerate on install)
-node_modules/.prisma/
-node_modules/@prisma/client/
-
-# Editor
-.vscode/
-.idea/
-*.swp
+# One-shot ops scripts (kept local, not committed)
+scripts/_*.ts

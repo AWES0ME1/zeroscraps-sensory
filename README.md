@@ -4,6 +4,15 @@ Chemistry-backed sensory compound system as a plug-in. 113-dimensional flavor pr
 
 Distributes as a self-contained npm package with an isolated `sensory` PostgreSQL schema. Install, enable, disable, or uninstall without touching host code or data.
 
+## Documentation
+
+- **[INSTALL.md](INSTALL.md)** — integration guide for host apps (HostAdapter, config, migrations, uninstall)
+- **[docs/sensory-compound-knowledge-base.md](docs/sensory-compound-knowledge-base.md)** — master reference for the 113-dim system, interaction model, dose-response, harmony score, calibration protocols
+- **[docs/sensory-dimension-reference.md](docs/sensory-dimension-reference.md)** — per-dim lookup (mechanism, anchors, descriptors, thresholds)
+- **[docs/sensory-calibration-rules.md](docs/sensory-calibration-rules.md)** — category invariants enforced on ingredient profile writes
+- **[docs/sensory-interaction-examples.md](docs/sensory-interaction-examples.md)** — worked JSON examples of all 6 rule tiers
+- **[docs/cooking-science-model.md](docs/cooking-science-model.md)** — Maillard, caramelization, collagen breakdown, compound effects, volatile timing curves
+
 ## Features
 
 - **113 sensory dimensions** — taste (7), chemesthetic (7), aroma family × secondary (72), texture (19), temperature (1), character (7)

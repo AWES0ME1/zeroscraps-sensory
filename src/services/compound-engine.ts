@@ -846,6 +846,18 @@ export async function persistV2Result(
     update: data,
     create: { recipeId, ...data },
   });
+
+  // Populate pgvector column separately — Prisma can't handle `Unsupported("vector(N)")`
+  // types through its upsert path. Keeps sensoryVector in sync with sensoryProfile so
+  // pgvector-based cosine similarity queries work alongside the Float[] cosine path.
+  if (result.profile.length > 0) {
+    const vectorLiteral = `[${result.profile.join(',')}]`;
+    await prisma.$executeRawUnsafe(
+      `UPDATE sensory.recipe_snapshots SET sensory_vector = $1::vector WHERE recipe_id = $2`,
+      vectorLiteral,
+      recipeId
+    );
+  }
 }
 
 log.info('compound-engine module loaded');

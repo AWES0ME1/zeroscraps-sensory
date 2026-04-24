@@ -52,13 +52,13 @@ async function main() {
     });
     console.log(`Locked fixtures: ${fixtures.length}\n`);
     for (const f of fixtures) {
-      const recipe = await prisma.recipe.findUnique({
-        where: { id: f.recipeId },
-        select: { title: true },
+      const snapshot = await prisma.recipeSensorySnapshot.findUnique({
+        where: { recipeId: f.recipeId },
+        select: { recipeTitle: true },
       });
       const status = f.lastVerifiedStatus ?? 'unverified';
       const statusIcon = status === 'pass' ? '✓' : status === 'fail' ? '✗' : '?';
-      console.log(`  ${statusIcon} ${(recipe?.title ?? f.recipeId.slice(0, 8)).padEnd(50)} [${status}] locked ${f.lockedAt.toISOString().slice(0, 10)}`);
+      console.log(`  ${statusIcon} ${(snapshot?.recipeTitle ?? f.recipeId.slice(0, 8)).padEnd(50)} [${status}] locked ${f.lockedAt.toISOString().slice(0, 10)}`);
     }
   } else if (mode === '--run') {
     const recompute = args.includes('--recompute');

@@ -1,0 +1,604 @@
+// ═══════════════════════════════════════════════════════════════════════
+// @zeroscraps/sensory — Plugin-owned Prisma Schema
+//
+// Everything this plugin needs lives in the "sensory" PostgreSQL schema.
+// The plugin connects to the host's database but owns its schema exclusively.
+//
+// Uninstall is a one-liner:
+//   DROP SCHEMA sensory CASCADE;
+//
+// IMPORTANT: This plugin has NO foreign keys into host tables.
+// It references Recipe.id as a plain string column, validated by convention
+// (not by the DB). This keeps the plugin genuinely separable.
+// ═══════════════════════════════════════════════════════════════════════
+
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../node_modules/.prisma/sensory-client"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  schemas    = ["sensory"]
+  extensions = [vector]
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// DIMENSION DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════
+
+model SensoryDimensionConfig {
+  id                 String   @id @default(cuid())
+  dimension          Int      @unique                                  // 0-112
+  name               String
+  category           String
+  primaryCategory    String?  @map("primary_category")
+  parentFamily       String?  @map("parent_family")
+  tier               String?
+  scaleType          String   @default("unipolar") @map("scale_type")
+  scaleMin           Float    @default(0) @map("scale_min")
+  scaleMax           Float    @default(6) @map("scale_max")
+  stevensExponent    Float    @default(1.0) @map("stevens_exponent")
+  thresholdMgPer100g Float    @default(100) @map("threshold_mg_per_100g")
+  saturationPoint    Float    @default(1.0) @map("saturation_point")
+  scalingConstant    Float    @default(0.1) @map("scaling_constant")
+  perceptionType     String   @default("chemical") @map("perception_type")
+  isComputable       Boolean  @default(true) @map("is_computable")
+  keywords           String[] @default([])
+  anchorExamples     String[] @default([]) @map("anchor_examples")
+  descriptorTerms    String[] @default([]) @map("descriptor_terms")
+  displayOrder       Int      @default(0) @map("display_order")
+  isActive           Boolean  @default(true) @map("is_active")
+  notes              String?
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("dimensions")
+  @@schema("sensory")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// INGREDIENT SENSORY PROFILE (113-dim potency per ingredient)
+// ═══════════════════════════════════════════════════════════════════════
+
+model IngredientSensoryProfile {
+  id               String   @id @default(cuid())
+  name             String   @unique
+  embedding        Unsupported("vector(1536)")?
+  sensoryProfile   Float[]  @default([]) @map("sensory_profile")
+  potency          Float[]  @default([]) @map("potency")
+  adminOverride    Float[]  @default([]) @map("admin_override")
+  compoundDerived  Boolean  @default(false) @map("compound_derived")
+  potencySource    String?  @map("potency_source")
+  confidenceScore  Float    @default(0) @map("confidence_score")
+  compoundEvidence Json?    @map("compound_evidence")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  chemProperties IngredientChemProperties?
+
+  @@map("ingredient_profiles")
+  @@schema("sensory")
+}
+
+model IngredientChemProperties {
+  id                String   @id @default(cuid())
+  ingredientName    String   @unique @map("ingredient_name")
+  sugarContent      Float    @default(0) @map("sugar_content")
+  sugarTypes        String[] @default([]) @map("sugar_types")
+  proteinContent    Float    @default(0) @map("protein_content")
+  proteinTypes      String[] @default([]) @map("protein_types")
+  fatContent        Float    @default(0) @map("fat_content")
+  fatTypes          String[] @default([]) @map("fat_types")
+  starchContent     Float    @default(0) @map("starch_content")
+  fiberContent      Float    @default(0) @map("fiber_content")
+  moistureContent   Float    @default(0) @map("moisture_content")
+  acidPh            Float    @default(7.0) @map("acid_ph")
+  collagenContent   Float    @default(0) @map("collagen_content")
+  pectinContent     Float    @default(0) @map("pectin_content")
+  glutenPotential   Float    @default(0) @map("gluten_potential")
+  volatileCompounds Float    @default(0) @map("volatile_compounds")
+  waterActivity     Float    @default(0.99) @map("water_activity")
+  smokePoint        Float?   @map("smoke_point")
+  meltingPoint     Float?   @map("melting_point")
+  enzymeActivity    String[] @default([]) @map("enzyme_activity")
+  absorptionRate    Float    @default(0) @map("absorption_rate")
+  source            String   @default("ai_seed") @map("source")
+  sourceCitation    String?  @map("source_citation")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  sensoryProfile IngredientSensoryProfile @relation(fields: [ingredientName], references: [name])
+
+  @@map("ingredient_chem_properties")
+  @@schema("sensory")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// INTERACTION RULES
+// ═══════════════════════════════════════════════════════════════════════
+
+model SensoryInteractionRule {
+  id                String   @id @default(cuid())
+  tier              String   @default("perceptual")
+  ruleType          String   @map("rule_type")
+  dimA              Int?     @map("dim_a")
+  dimB              Int?     @map("dim_b")
+  categoryA         String?  @map("category_a")
+  categoryB         String?  @map("category_b")
+  ingredientA       String?  @map("ingredient_a")
+  ingredientB       String?  @map("ingredient_b")
+  chemProperty      String?  @map("chem_property")
+  doseCurve         Json?    @map("dose_curve")
+  doseUnit          String   @default("grams_ratio") @map("dose_unit")
+  coefficient       Float?   @default(1.0)
+  threshold         Float    @default(0.0)
+  maxEffect         Float    @default(2.0) @map("max_effect")
+  effectDim         Int?     @map("effect_dim")
+  effectType        String   @default("add") @map("effect_type")
+  requiresMethod    String[] @default([]) @map("requires_method")
+  requiresTempRange String?  @map("requires_temp_range")
+  exceptions        String[] @default([])
+  stabilizers       String[] @default([])
+  severity          Float    @default(1.0)
+  description       String?
+  citations         String[] @default([])
+  source            String   @default("literature")
+  isActive          Boolean  @default(true) @map("is_active")
+  ruleVersion       Int      @default(1) @map("rule_version")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([tier, ruleType])
+  @@map("interaction_rules")
+  @@schema("sensory")
+}
+
+model PhysicalInteractionRule {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  category          String
+  triggerA          Json
+  triggerB          Json?
+  doseCurve         Json     @map("dose_curve")
+  doseUnit          String   @default("grams_ratio") @map("dose_unit")
+  effectDims        Json     @map("effect_dims")
+  stabilizers       String[] @default([])
+  requiresTempRange String?  @map("requires_temp_range")
+  requiresMethod    String[] @default([]) @map("requires_method")
+  exceptions        String[] @default([])
+  description       String
+  citations         String[] @default([])
+  isActive          Boolean  @default(true) @map("is_active")
+  ruleVersion       Int      @default(1) @map("rule_version")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([category])
+  @@map("physical_rules")
+  @@schema("sensory")
+}
+
+model FlavorClashRule {
+  id             String   @id @default(cuid())
+  scopeType      String   @map("scope_type")
+  ingredientA    String?  @map("ingredient_a")
+  ingredientB    String?  @map("ingredient_b")
+  categoryA      String?  @map("category_a")
+  categoryB      String?  @map("category_b")
+  dimConstraints Json?    @map("dim_constraints")
+  severityCurve  Json     @map("severity_curve")
+  doseUnit       String   @default("grams_ratio") @map("dose_unit")
+  cultures       String[] @default(["universal"])
+  exceptions     String[] @default([])
+  reason         String
+  citations      String[] @default([])
+  ruleVersion    Int      @default(1) @map("rule_version")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([scopeType])
+  @@map("clash_rules")
+  @@schema("sensory")
+}
+
+model CombinationEmergence {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  cuisineContext    String?  @map("cuisine_context")
+  triggers          Json
+  minTriggerCount   Int      @default(2) @map("min_trigger_count")
+  requiresMethod    String[] @default([]) @map("requires_method")
+  requiresTempRange String?  @map("requires_temp_range")
+  emergentBoosts    Json     @map("emergent_boosts")
+  emergentTags      String[] @default([]) @map("emergent_tags")
+  harmonyBonus      Float    @default(0.1) @map("harmony_bonus")
+  description       String
+  citations         String[] @default([])
+  isActive          Boolean  @default(true) @map("is_active")
+  ruleVersion       Int      @default(1) @map("rule_version")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([cuisineContext])
+  @@map("emergences")
+  @@schema("sensory")
+}
+
+model DimensionDoseThreshold {
+  id           String  @id @default(cuid())
+  dimensionIdx Int     @map("dimension_idx")
+  context      String
+  traceDose    Float   @map("trace_dose")
+  noticeable   Float
+  dominant     Float
+  overwhelming Float
+  notes        String?
+
+  @@unique([dimensionIdx, context])
+  @@map("dose_thresholds")
+  @@schema("sensory")
+}
+
+model SensoryDescriptor {
+  id          String   @id @default(cuid())
+  term        String   @unique
+  category    String?
+  dimMappings Json     @map("dim_mappings")
+  aliases     String[] @default([])
+  searchCount Int      @default(0) @map("search_count")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([term])
+  @@index([category])
+  @@index([searchCount])
+  @@map("descriptors")
+  @@schema("sensory")
+}
+
+model CalibrationRule {
+  id            String   @id @default(cuid())
+  category      String
+  subCategory   String?  @map("sub_category")
+  ruleType      String   @map("rule_type")
+  dimensionIdx  Int?     @map("dimension_idx")
+  operator      String
+  threshold     Float?
+  thresholdHigh Float?   @map("threshold_high")
+  relatedDim    Int?     @map("related_dim")
+  appliesWhen   Json?    @map("applies_when")
+  severity      String   @default("error")
+  description   String
+  rationale     String?
+  examples      Json?
+  citations     String[] @default([])
+  isActive      Boolean  @default(true) @map("is_active")
+  ruleVersion   Int      @default(1) @map("rule_version")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([category])
+  @@index([category, subCategory])
+  @@index([severity])
+  @@map("calibration_rules")
+  @@schema("sensory")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// COOKING TRANSFORMS
+// ═══════════════════════════════════════════════════════════════════════
+
+model CookingReactionRule {
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  displayName         String   @map("display_name")
+  description         String?
+  minTemperature      Float    @default(0) @map("min_temperature")
+  maxTemperature      Float?   @map("max_temperature")
+  moistureRequired    String   @default("any") @map("moisture_required")
+  minDurationMinutes  Float    @default(0) @map("min_duration_minutes")
+  requiresProperty    String[] @default([]) @map("requires_property")
+  requiresAnyProperty String[] @default([]) @map("requires_any_property")
+  inhibitedBy         String[] @default([]) @map("inhibited_by")
+  enhancedBy          String[] @default([]) @map("enhanced_by")
+  sensoryDeltas       Float[]  @default([]) @map("sensory_deltas")
+  peakTimeMinutes     Float?   @map("peak_time_minutes")
+  decayTimeMinutes    Float?   @map("decay_time_minutes")
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("cooking_reactions")
+  @@schema("sensory")
+}
+
+model CompoundCookingEffect {
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  displayName         String   @map("display_name")
+  description         String?
+  triggerKeywords     String[] @default([]) @map("trigger_keywords")
+  requiresIngredients String[] @default([]) @map("requires_ingredients")
+  requiresSequence    Boolean  @default(false) @map("requires_sequence")
+  sequenceDescription String?  @map("sequence_description")
+  minTemperature      Float    @default(0) @map("min_temperature")
+  moistureContext     String   @default("any") @map("moisture_context")
+  minDurationMinutes  Float    @default(0) @map("min_duration_minutes")
+  sensoryDeltas       Float[]  @default([]) @map("sensory_deltas")
+  variants            Json?
+  category            String   @default("technique")
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("compound_effects")
+  @@schema("sensory")
+}
+
+model IngredientPotencyAnchor {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  potency        Float[]
+  chemProperties Json?    @map("chem_properties")
+  category       String
+  notes          String?
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  updatedBy      String?  @map("updated_by")
+
+  @@map("anchors")
+  @@schema("sensory")
+}
+
+model DishArchetype {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  expectedProfile Float[]  @map("expected_profile")
+  tolerances      Float[]
+  keywords        String[]
+  servingTemp     String?  @map("serving_temp")
+  cookingMethods  String[] @default([]) @map("cooking_methods")
+  category        String   @default("main")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("archetypes")
+  @@schema("sensory")
+}
+
+model ServingTempModifier {
+  id            String   @id @default(cuid())
+  tempClass     String   @unique @map("temp_class")
+  tempRangeLow  Float    @map("temp_range_low")
+  tempRangeHigh Float    @map("temp_range_high")
+  modifiers     Float[]
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("temp_modifiers")
+  @@schema("sensory")
+}
+
+model VolatileTimingCurve {
+  id              String   @id @default(cuid())
+  ingredientName  String   @map("ingredient_name")
+  cookingMethod   String   @map("cooking_method")
+  dimension       Int
+  curvePoints     Json     @map("curve_points")
+  peakMinutes     Float    @map("peak_minutes")
+  halfLifeMinutes Float    @map("half_life_minutes")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([ingredientName, cookingMethod, dimension])
+  @@map("volatile_curves")
+  @@schema("sensory")
+}
+
+model IngredientSynergyPair {
+  id            String   @id @default(cuid())
+  ingredientA   String   @map("ingredient_a")
+  ingredientB   String   @map("ingredient_b")
+  synergyType   String   @map("synergy_type")
+  sensoryBoosts Float[]  @default([]) @map("sensory_boosts")
+  description   String?
+  source        String   @default("culinary_literature")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([ingredientA, ingredientB, synergyType])
+  @@map("synergy_pairs")
+  @@schema("sensory")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// RECIPE SENSORY SNAPSHOT
+// Replaces the 20+ columns formerly on the host's Recipe table.
+// Keyed by recipeId (no FK — weak coupling for plugin isolation).
+// ═══════════════════════════════════════════════════════════════════════
+
+model RecipeSensorySnapshot {
+  id                        String   @id @default(cuid())
+  recipeId                  String   @unique @map("recipe_id")     // host recipe ID (weak ref)
+  recipeTitle               String   @default("") @map("recipe_title") // denormalized for plugin-local rendering
+  sensoryProfile            Float[]  @default([]) @map("sensory_profile")     // 113 dims
+  sensoryVector             Unsupported("vector(113)")? @map("sensory_vector")
+  aftertasteProfile         Float[]  @default([]) @map("aftertaste_profile")  // 8 dims
+  bodyWeight                Float?   @map("body_weight")
+  harmonyScoreUniversal     Float?   @map("harmony_score_universal")
+  harmonyScoreCuisine       Json?    @map("harmony_score_cuisine")
+  detectedClashes           Json?    @map("detected_clashes")
+  detectedEmergences        Json?    @map("detected_emergences")
+  dominantArchetype         String?  @map("dominant_archetype")
+  archetypeConfidence       Float?   @map("archetype_confidence")
+  cuisineTags               String[] @default([]) @map("cuisine_tags")
+  courseType                String?  @map("course_type")
+  seasonalContext           String[] @default([]) @map("seasonal_context")
+  balanceScore              Float?   @map("balance_score")
+  complexityScore           Float?   @map("complexity_score")
+  intensityScore            Float?   @map("intensity_score")
+  isCrunchy                 Boolean  @default(false) @map("is_crunchy")
+  isCreamy                  Boolean  @default(false) @map("is_creamy")
+  isRich                    Boolean  @default(false) @map("is_rich")
+  isSpicy                   Boolean  @default(false) @map("is_spicy")
+  isSweet                   Boolean  @default(false) @map("is_sweet")
+  isUmami                   Boolean  @default(false) @map("is_umami")
+  isFresh                   Boolean  @default(false) @map("is_fresh")
+  isSmoky                   Boolean  @default(false) @map("is_smoky")
+  isBright                  Boolean  @default(false) @map("is_bright")
+  isHearty                  Boolean  @default(false) @map("is_hearty")
+  computedByRulesetVersion  Int?     @map("computed_by_ruleset_version")
+  computedAt                DateTime @default(now()) @map("computed_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  @@index([isCrunchy, isRich])
+  @@index([isCreamy, isUmami])
+  @@index([isSweet, isSmoky])
+  @@index([isSpicy])
+  @@index([dominantArchetype])
+  @@index([harmonyScoreUniversal])
+  @@index([courseType])
+  @@map("recipe_snapshots")
+  @@schema("sensory")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// USER PREFERENCES (still keyed by userId from host)
+// ═══════════════════════════════════════════════════════════════════════
+
+model UserSensoryPreference {
+  id                String   @id @default(cuid())
+  userId            String   @unique @map("user_id")
+  preferences       Float[]  @default([])
+  weights           Float[]  @default([])
+  avoid             String[] @default([])
+  preferredCuisines Json?    @map("preferred_cuisines")
+  avoidedCuisines   String[] @default([]) @map("avoided_cuisines")
+  likedRecipeIds    String[] @default([]) @map("liked_recipe_ids")
+  dislikedRecipeIds String[] @default([]) @map("disliked_recipe_ids")
+  derivedFromLikes  Boolean  @default(false) @map("derived_from_likes")
+  onboardingVersion String?  @map("onboarding_version")
+  lastUpdated       DateTime @updatedAt @map("last_updated")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@map("user_preferences")
+  @@schema("sensory")
+}
+
+model RecipePreferenceMatch {
+  id              String   @id @default(cuid())
+  userId          String   @map("user_id")
+  recipeId        String   @map("recipe_id")
+  similarity      Float
+  harmonyPersonal Float    @map("harmony_personal")
+  finalScore      Float    @map("final_score")
+  explanation     Json
+  computedAt      DateTime @default(now()) @map("computed_at")
+  ttlExpiresAt    DateTime @map("ttl_expires_at")
+
+  @@unique([userId, recipeId])
+  @@index([userId, finalScore])
+  @@index([ttlExpiresAt])
+  @@map("preference_matches")
+  @@schema("sensory")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// AUDIT & VERSIONING
+// ═══════════════════════════════════════════════════════════════════════
+
+model IngredientChangeLog {
+  id             String   @id @default(cuid())
+  ingredientName String   @map("ingredient_name")
+  changeType     String   @map("change_type")
+  beforeJson     Json?    @map("before_json")
+  afterJson      Json?    @map("after_json")
+  changedBy      String   @map("changed_by")
+  reason         String?
+  sessionId      String?  @map("session_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([ingredientName, createdAt])
+  @@index([changedBy])
+  @@index([sessionId])
+  @@map("change_logs")
+  @@schema("sensory")
+}
+
+model RuleVersion {
+  id         String   @id @default(cuid())
+  ruleType   String   @map("rule_type")
+  ruleId     String   @map("rule_id")
+  version    Int
+  beforeJson Json     @map("before_json")
+  afterJson  Json     @map("after_json")
+  changedBy  String   @map("changed_by")
+  reason     String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([ruleType, ruleId, version])
+  @@index([createdAt])
+  @@map("rule_versions")
+  @@schema("sensory")
+}
+
+model SensoryRegressionFixture {
+  id                 String    @id @default(cuid())
+  recipeId           String    @unique @map("recipe_id")
+  expectedProfile    Float[]   @map("expected_profile")
+  tolerance          Float[]
+  expectedArchetype  String?   @map("expected_archetype")
+  expectedHarmony    Float?    @map("expected_harmony")
+  expectedClashes    Json?     @map("expected_clashes")
+  expectedEmergences Json?     @map("expected_emergences")
+  lockedAt           DateTime  @map("locked_at")
+  lockedBy           String    @map("locked_by")
+  description        String?
+  lastVerifiedAt     DateTime? @map("last_verified_at")
+  lastVerifiedStatus String?   @map("last_verified_status")
+
+  @@index([lastVerifiedStatus])
+  @@map("regression_fixtures")
+  @@schema("sensory")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// EXTERNAL DATA (optional — only used by AI enhancer)
+// ═══════════════════════════════════════════════════════════════════════
+
+model IngredientFoodMappingSensory {
+  id             String   @id @default(cuid())
+  ingredientName String   @unique @map("ingredient_name")
+  foodDbFoodId   Int      @map("food_db_food_id")
+  foodDbFoodName String   @map("food_db_food_name")
+  confidence     Float    @default(0)
+  matchSource    String   @default("ai") @map("match_source")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([foodDbFoodId])
+  @@map("foodb_mappings")
+  @@schema("sensory")
+}
+
+model SensoryDataSource {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  version     String
+  url         String?
+  recordCount Int       @default(0) @map("record_count")
+  lastSyncAt  DateTime? @map("last_sync_at")
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("data_sources")
+  @@schema("sensory")
+}

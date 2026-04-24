@@ -1,0 +1,72 @@
+{
+  "name": "@zeroscraps/sensory",
+  "version": "0.1.0",
+  "description": "Chemistry-backed sensory compound system: 113-dim flavor profiles, cooking transforms, interaction rules, natural-language recipe matching. Distributed as a plug-in with fully isolated schema and codebase.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*",
+    "prisma/**/*",
+    "migrations/**/*",
+    "scripts/**/*",
+    "docs/**/*",
+    "README.md",
+    "INSTALL.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist node_modules/.prisma",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:migrate": "prisma migrate deploy --schema prisma/schema.prisma",
+    "db:migrate:create": "prisma migrate dev --schema prisma/schema.prisma --create-only",
+    "db:studio": "prisma studio --schema prisma/schema.prisma --port 5556",
+    "seed": "ts-node scripts/seed-all.ts",
+    "seed:dimensions": "ts-node scripts/seed-dimensions.ts",
+    "seed:rules": "ts-node scripts/seed-interaction-rules.ts",
+    "seed:calibration": "ts-node scripts/seed-calibration-rules.ts",
+    "seed:vocabulary": "ts-node scripts/seed-vocabulary.ts",
+    "cli:regression": "ts-node scripts/regression-cli.ts",
+    "cli:enhance": "ts-node scripts/run-enhancement.ts",
+    "cli:expand-usda": "ts-node scripts/expand-usda-mappings.ts",
+    "cli:recompute": "ts-node scripts/recompute-recipes.ts",
+    "uninstall": "ts-node scripts/uninstall.ts",
+    "lint": "eslint src/ --ext .ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "echo 'TODO: tests' && exit 0",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "keywords": [
+    "sensory",
+    "flavor",
+    "recipe",
+    "food-science",
+    "cooking",
+    "nlp",
+    "prisma",
+    "express",
+    "plugin"
+  ],
+  "author": "ZeroScraps",
+  "license": "UNLICENSED",
+  "private": true,
+  "peerDependencies": {
+    "express": "^5.0.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "dotenv": "^16.4.5",
+    "openai": "^4.70.0",
+    "pino": "^9.5.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.5.0",
+    "prisma": "^6.19.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -27,6 +27,24 @@ export interface HostRecipe {
   instructions: HostRecipeInstruction[];
 }
 
+/**
+ * An audit event the plugin asks the host to record. The host owns the audit
+ * table, retention, and dashboards; the plugin only emits semantic events with
+ * a stable action namespace.
+ *
+ * Action conventions: SCREAMING_SNAKE prefixed with SENSORY_ so the host can
+ * filter plugin events from native ones. Plugin should never emit unprefixed
+ * actions.
+ */
+export interface SensoryAuditEvent {
+  action: string;                                // e.g. "SENSORY_RECOMPUTE_ALL_TRIGGERED"
+  actorId?: string;                              // userId of the requester (omit if system/cron)
+  targetId?: string;                             // recipeId / userId being acted on
+  ip?: string;                                   // client IP for forensics
+  userAgent?: string;
+  metadata?: Record<string, unknown>;            // action-specific context
+}
+
 export interface HostAdapter {
   /**
    * Fetch a recipe by ID from the host's database.
@@ -45,6 +63,27 @@ export interface HostAdapter {
    * Return undefined for anonymous requests.
    */
   getUserId(req: Request): string | undefined;
+
+  /**
+   * Optional: record an audit event in the host's audit log.
+   * Plugin emits these on admin actions and write paths; host owns
+   * persistence/retention/forensics. If unset, plugin falls back to its own
+   * pino log (visibility only — no durable trail).
+   */
+  audit?: (event: SensoryAuditEvent) => void | Promise<void>;
+
+  /**
+   * Optional: per-user/system budget check before the plugin spends OpenAI tokens.
+   * Implementations should be cheap (Redis incr) — called on every AI call site.
+   * Return `{ allowed: false, reason }` to short-circuit and avoid the API call.
+   * If unset, plugin allows all calls (existing OpenAI client circuit breaker
+   * remains the only backstop).
+   */
+  checkAiBudget?: (input: {
+    userId?: string;
+    operation: 'enhance' | 'embed' | 'parse';
+    estimatedCostUsd?: number;
+  }) => Promise<{ allowed: boolean; reason?: string }>;
 }
 
 export interface SensoryPluginConfig {
@@ -76,6 +115,14 @@ export interface SensoryPluginConfig {
 
   /** Optional: admin gate middleware. Required to expose admin routes (recompute-all, etc.). */
   requireAdmin?: RequestHandler;
+
+  /**
+   * Optional: step-up auth gate (e.g. host's `requireAdminElevation()`).
+   * Applied AFTER requireAdmin to destructive admin routes such as recompute-all.
+   * Read-only admin routes (like snapshot-stats) skip this so dashboards don't
+   * trigger re-elevation every poll.
+   */
+  requireAdminElevation?: RequestHandler;
 
   /** Optional: custom logger. Default: pino with 'sensory-plugin' tag. */
   logger?: import('./lib/logger').Logger;

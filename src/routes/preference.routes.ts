@@ -14,6 +14,7 @@ import {
   type OnboardingAnswer,
 } from '../services/user-preference';
 import { createLogger } from '../lib/logger';
+import { auditEmit, withRequestContext } from '../lib/audit';
 
 const log = createLogger('preference-routes');
 
@@ -73,6 +74,13 @@ export function createPreferenceRouter(ctx: PreferenceRoutesContext): Router {
       }
 
       const snapshot = await applyOnboardingAnswers(userId, answers);
+      await auditEmit(
+        withRequestContext(req, {
+          action: 'SENSORY_PREFERENCE_ONBOARDED',
+          targetId: userId,
+          metadata: { answerCount: answers.length },
+        })
+      );
       return res.json({ success: true, snapshot });
     } catch (err) {
       log.error({ err }, 'Onboarding failed');
@@ -90,8 +98,17 @@ export function createPreferenceRouter(ctx: PreferenceRoutesContext): Router {
       if (!recipeId || typeof recipeId !== 'string') {
         return res.status(400).json({ error: 'recipeId required' });
       }
+      if (recipeId.length > 64) {
+        return res.status(400).json({ error: 'recipeId too long' });
+      }
 
       await recordLike(userId, recipeId);
+      await auditEmit(
+        withRequestContext(req, {
+          action: 'SENSORY_PREFERENCE_LIKE',
+          targetId: recipeId,
+        })
+      );
       return res.json({ success: true });
     } catch (err) {
       log.error({ err }, 'Like failed');
@@ -109,8 +126,17 @@ export function createPreferenceRouter(ctx: PreferenceRoutesContext): Router {
       if (!recipeId || typeof recipeId !== 'string') {
         return res.status(400).json({ error: 'recipeId required' });
       }
+      if (recipeId.length > 64) {
+        return res.status(400).json({ error: 'recipeId too long' });
+      }
 
       await recordDislike(userId, recipeId);
+      await auditEmit(
+        withRequestContext(req, {
+          action: 'SENSORY_PREFERENCE_DISLIKE',
+          targetId: recipeId,
+        })
+      );
       return res.json({ success: true });
     } catch (err) {
       log.error({ err }, 'Dislike failed');
@@ -131,8 +157,23 @@ export function createPreferenceRouter(ctx: PreferenceRoutesContext): Router {
       if (avoid.length > 50) {
         return res.status(400).json({ error: 'Max 50 avoidance terms' });
       }
+      // Each term must be a non-empty string, capped to a sane length.
+      // Without this an attacker could submit 50 × 1MB strings.
+      for (const term of avoid) {
+        if (typeof term !== 'string' || term.length === 0 || term.length > 64) {
+          return res.status(400).json({ error: 'Each avoidance term must be 1–64 chars' });
+        }
+      }
 
-      await setAvoidanceList(userId, avoid.map((s) => String(s).toLowerCase().trim()));
+      const normalized = avoid.map((s) => s.toLowerCase().trim());
+      await setAvoidanceList(userId, normalized);
+      await auditEmit(
+        withRequestContext(req, {
+          action: 'SENSORY_PREFERENCE_AVOID_SET',
+          targetId: userId,
+          metadata: { count: normalized.length },
+        })
+      );
       return res.json({ success: true });
     } catch (err) {
       log.error({ err }, 'Set avoidance failed');

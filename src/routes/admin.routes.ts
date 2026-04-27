@@ -9,6 +9,7 @@ import { Router, type RequestHandler, type Request, type Response } from 'expres
 import type { HostAdapter } from '../host';
 import { createLogger } from '../lib/logger';
 import { composeRecipeSensoryV2, persistV2Result } from '../services/compound-engine';
+import { auditEmit, withRequestContext } from '../lib/audit';
 
 const log = createLogger('admin-routes');
 
@@ -16,7 +17,24 @@ export interface AdminRoutesContext {
   host: HostAdapter;
   authMiddleware: RequestHandler;
   requireAdmin: RequestHandler;
+  /** Optional step-up auth gate (host's requireAdminElevation). Applied to destructive routes. */
+  requireAdminElevation?: RequestHandler;
   rateLimiter: RequestHandler;
+}
+
+/**
+ * Coerce a body field to a finite integer in [min, max], with a default
+ * if the value is missing, NaN, infinite, or out of range.
+ *
+ * `Number("abc")` returns NaN; `Math.min(NaN, x)` returns NaN. Callers that
+ * lean on Math.min/max alone for clamping silently propagate NaN into Prisma
+ * `take`/`skip` clauses, which then either reject or behave unpredictably.
+ * This helper short-circuits that.
+ */
+function clampInt(raw: unknown, def: number, min: number, max: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(Math.max(Math.floor(n), min), max);
 }
 
 export function createAdminRouter(ctx: AdminRoutesContext): Router {
@@ -24,6 +42,10 @@ export function createAdminRouter(ctx: AdminRoutesContext): Router {
   r.use(ctx.authMiddleware);
   r.use(ctx.requireAdmin);
   r.use(ctx.rateLimiter);
+
+  // Step-up auth applies only to destructive routes; read-only stats can run
+  // on plain admin auth so dashboards don't constantly re-prompt.
+  const elevate: RequestHandler[] = ctx.requireAdminElevation ? [ctx.requireAdminElevation] : [];
 
   /**
    * POST /admin/recompute-all
@@ -34,12 +56,20 @@ export function createAdminRouter(ctx: AdminRoutesContext): Router {
    *
    * Body (optional): { batchSize?: number, concurrency?: number, limit?: number }
    */
-  r.post('/recompute-all', async (req: Request, res: Response): Promise<void> => {
-    const batchSize = Math.min(Number(req.body?.batchSize ?? 50), 500);
-    const concurrency = Math.min(Math.max(Number(req.body?.concurrency ?? 4), 1), 16);
-    const limit = req.body?.limit ? Number(req.body.limit) : undefined;
+  r.post('/recompute-all', ...elevate, async (req: Request, res: Response): Promise<void> => {
+    const batchSize = clampInt(req.body?.batchSize, 50, 1, 500);
+    const concurrency = clampInt(req.body?.concurrency, 4, 1, 16);
+    const limitRaw = req.body?.limit;
+    const limit = limitRaw == null ? undefined : clampInt(limitRaw, 0, 1, 1_000_000);
+    const actorId = ctx.host.getUserId(req);
 
-    log.info({ batchSize, concurrency, limit }, 'recompute-all kickoff');
+    log.info({ batchSize, concurrency, limit, actorId }, 'recompute-all kickoff');
+    await auditEmit(
+      withRequestContext(req, {
+        action: 'SENSORY_RECOMPUTE_ALL_TRIGGERED',
+        metadata: { batchSize, concurrency, limit: limit ?? null },
+      })
+    );
 
     // Fire-and-forget so the HTTP request returns immediately.
     void (async () => {
@@ -84,10 +114,13 @@ export function createAdminRouter(ctx: AdminRoutesContext): Router {
         await Promise.all(workers);
         offset += ids.length;
       }
-      log.info(
-        { processed, failed, durationMs: Date.now() - startedAt },
-        'recompute-all complete'
-      );
+      const durationMs = Date.now() - startedAt;
+      log.info({ processed, failed, durationMs }, 'recompute-all complete');
+      await auditEmit({
+        action: 'SENSORY_RECOMPUTE_ALL_FINISHED',
+        actorId,
+        metadata: { processed, failed, durationMs, batchSize, concurrency },
+      });
     })().catch((err) => log.error({ err }, 'recompute-all worker crashed'));
 
     res.status(202).json({

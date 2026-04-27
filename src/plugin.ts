@@ -161,10 +161,17 @@ export function createSensoryPlugin(config: SensoryPluginConfig): SensoryPlugin 
             host: config.host,
             authMiddleware: config.authMiddleware,
             requireAdmin: config.requireAdmin,
+            requireAdminElevation: config.requireAdminElevation,
             rateLimiter: makeLimiter('rl:sensory-admin', adminMax),
           })
         );
-        log.info({ mount: `${mountPrefix}/admin` }, 'Admin routes registered');
+        log.info(
+          {
+            mount: `${mountPrefix}/admin`,
+            elevation: !!config.requireAdminElevation,
+          },
+          'Admin routes registered'
+        );
       } else if (features.admin && !config.requireAdmin) {
         log.warn({}, 'features.admin enabled but config.requireAdmin not provided — admin routes NOT mounted');
       }

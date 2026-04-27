@@ -74,6 +74,9 @@ export interface SensoryPluginConfig {
     prefix: string;
   }) => RequestHandler;
 
+  /** Optional: admin gate middleware. Required to expose admin routes (recompute-all, etc.). */
+  requireAdmin?: RequestHandler;
+
   /** Optional: custom logger. Default: pino with 'sensory-plugin' tag. */
   logger?: import('./lib/logger').Logger;
 
@@ -85,5 +88,6 @@ export interface SensoryPluginConfig {
     search?: boolean;
     preferences?: boolean;
     aiEnhancer?: boolean;
+    admin?: boolean;
   };
 }

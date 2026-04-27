@@ -24,6 +24,7 @@ import { createRateLimiter as defaultRateLimiter } from './lib/rate-limiter';
 import prisma, { disconnectPrisma } from './lib/prisma';
 import { createSearchRouter } from './routes/search.routes';
 import { createPreferenceRouter } from './routes/preference.routes';
+import { createAdminRouter } from './routes/admin.routes';
 
 // Re-export service-level helpers so hosts can call them directly
 export {
@@ -112,6 +113,7 @@ export function createSensoryPlugin(config: SensoryPluginConfig): SensoryPlugin 
     search: config.features?.search ?? true,
     preferences: config.features?.preferences ?? true,
     aiEnhancer: config.features?.aiEnhancer ?? true,
+    admin: (config.features?.admin ?? true) && !!config.requireAdmin,
   };
 
   let mounted = false;
@@ -149,6 +151,22 @@ export function createSensoryPlugin(config: SensoryPluginConfig): SensoryPlugin 
           })
         );
         log.info({ mount: `${mountPrefix}/preferences` }, 'Preference routes registered');
+      }
+
+      if (features.admin && config.requireAdmin) {
+        const adminMax = parseInt(process.env.SENSORY_RATE_LIMIT_ADMIN_PER_MIN || '5', 10);
+        app.use(
+          `${mountPrefix}/admin`,
+          createAdminRouter({
+            host: config.host,
+            authMiddleware: config.authMiddleware,
+            requireAdmin: config.requireAdmin,
+            rateLimiter: makeLimiter('rl:sensory-admin', adminMax),
+          })
+        );
+        log.info({ mount: `${mountPrefix}/admin` }, 'Admin routes registered');
+      } else if (features.admin && !config.requireAdmin) {
+        log.warn({}, 'features.admin enabled but config.requireAdmin not provided — admin routes NOT mounted');
       }
 
       mounted = true;

@@ -140,6 +140,10 @@ async function computePersonalBoost(
 /**
  * Primary entry point: natural language query → ranked recipes.
  *
+ * Uses pgvector's `<=>` cosine-distance operator for an indexable ANN scan
+ * over candidates, then re-ranks the top-K in JS to apply harmony,
+ * personalization, and avoidance penalties (which need the full Float[]).
+ *
  * Example:
  *   findRecipesByQuery("funky and crunchy, not too spicy", { userId: "..." })
  */
@@ -157,37 +161,79 @@ export async function findRecipesByQuery(
   const effectiveCuisine = options.cuisineFilter ?? parsed.cuisineContext;
   const effectiveCourse = options.courseFilter ?? parsed.courseHint;
 
-  // 3. Fetch candidate recipes (with filters)
-  const where: Record<string, unknown> = {
-    computedByRulesetVersion: 2,
-    sensoryProfile: { isEmpty: false },
-  };
-  if (effectiveCourse) where.courseType = effectiveCourse;
-  if (effectiveCuisine) where.cuisineTags = { has: effectiveCuisine };
-  if (minHarmony > 0) where.harmonyScoreUniversal = { gte: minHarmony };
+  // 3. ANN candidate fetch via pgvector cosine distance.
+  //    Fetch ~5x the requested limit so the JS re-rank has room to apply
+  //    harmony/personalization/avoidance scoring without truncating good hits.
+  const candidatePool = Math.max(limit * 5, 60);
+  const queryVectorLiteral = `[${parsed.positiveVector.join(',')}]`;
 
-  const recipes = await prisma.recipeSensorySnapshot.findMany({
-    where,
-    select: {
-      recipeId: true,
-      recipeTitle: true,
-      sensoryProfile: true,
-      harmonyScoreUniversal: true,
-      harmonyScoreCuisine: true,
-      detectedEmergences: true,
-      detectedClashes: true,
-      dominantArchetype: true,
-      cuisineTags: true,
-      courseType: true,
-      isRich: true,
-      isCrunchy: true,
-      isSpicy: true,
-      isCreamy: true,
-      isUmami: true,
-      isSweet: true,
-      isFresh: true,
-    },
-  });
+  // Build dynamic WHERE without leaking string interpolation into SQL.
+  // Each filter value is bound through $N placeholders.
+  const params: unknown[] = [queryVectorLiteral];
+  const whereClauses: string[] = [
+    `computed_by_ruleset_version = 2`,
+    `sensory_vector IS NOT NULL`,
+    `array_length(sensory_profile, 1) > 0`,
+  ];
+  if (minHarmony > 0) {
+    params.push(minHarmony);
+    whereClauses.push(`harmony_score_universal >= $${params.length}`);
+  }
+  if (effectiveCourse) {
+    params.push(effectiveCourse);
+    whereClauses.push(`course_type = $${params.length}`);
+  }
+  if (effectiveCuisine) {
+    params.push(effectiveCuisine);
+    whereClauses.push(`$${params.length} = ANY(cuisine_tags)`);
+  }
+  params.push(candidatePool);
+
+  const sql = `
+    SELECT
+      recipe_id          AS "recipeId",
+      recipe_title       AS "recipeTitle",
+      sensory_profile    AS "sensoryProfile",
+      harmony_score_universal AS "harmonyScoreUniversal",
+      harmony_score_cuisine   AS "harmonyScoreCuisine",
+      detected_emergences AS "detectedEmergences",
+      detected_clashes    AS "detectedClashes",
+      dominant_archetype  AS "dominantArchetype",
+      cuisine_tags        AS "cuisineTags",
+      course_type         AS "courseType",
+      is_rich    AS "isRich",
+      is_crunchy AS "isCrunchy",
+      is_spicy   AS "isSpicy",
+      is_creamy  AS "isCreamy",
+      is_umami   AS "isUmami",
+      is_sweet   AS "isSweet",
+      is_fresh   AS "isFresh"
+    FROM sensory.recipe_snapshots
+    WHERE ${whereClauses.join(' AND ')}
+    ORDER BY sensory_vector <=> $1::vector
+    LIMIT $${params.length}
+  `;
+
+  type Row = {
+    recipeId: string;
+    recipeTitle: string;
+    sensoryProfile: number[];
+    harmonyScoreUniversal: number | null;
+    harmonyScoreCuisine: Record<string, number> | null;
+    detectedEmergences: Array<{ name: string }> | null;
+    detectedClashes: Array<{ reason: string }> | null;
+    dominantArchetype: string | null;
+    cuisineTags: string[];
+    courseType: string | null;
+    isRich: boolean;
+    isCrunchy: boolean;
+    isSpicy: boolean;
+    isCreamy: boolean;
+    isUmami: boolean;
+    isSweet: boolean;
+    isFresh: boolean;
+  };
+  const recipes = (await prisma.$queryRawUnsafe(sql, ...params)) as Row[];
 
   const dimNames = await getDimNames();
   const results: MatchedRecipe[] = [];
@@ -273,7 +319,8 @@ export async function findRecipesByQuery(
 // ── "More like this" recipe similarity ───────────────────────────────────
 
 /**
- * Find recipes similar to a reference recipe (cosine similarity of profiles).
+ * Find recipes similar to a reference recipe.
+ * Uses pgvector cosine distance for ANN, then blends with harmony in JS.
  */
 export async function findSimilarRecipes(
   recipeId: string,
@@ -286,37 +333,63 @@ export async function findSimilarRecipes(
   });
   if (!ref || ref.sensoryProfile.length === 0) return [];
 
-  const where: Record<string, unknown> = {
-    recipeId: { not: recipeId },
-    computedByRulesetVersion: 2,
-    sensoryProfile: { isEmpty: false },
-  };
-  if (options.courseFilter || ref.courseType) {
-    where.courseType = options.courseFilter ?? ref.courseType;
-  }
+  const refVectorLiteral = `[${ref.sensoryProfile.join(',')}]`;
+  const courseFilter = options.courseFilter ?? ref.courseType ?? null;
+  const candidatePool = Math.max(limit * 5, 30);
 
-  const candidates = await prisma.recipeSensorySnapshot.findMany({
-    where,
-    select: {
-      recipeId: true,
-      recipeTitle: true,
-      sensoryProfile: true,
-      harmonyScoreUniversal: true,
-      harmonyScoreCuisine: true,
-      detectedEmergences: true,
-      detectedClashes: true,
-      dominantArchetype: true,
-      cuisineTags: true,
-      courseType: true,
-      isRich: true,
-      isCrunchy: true,
-      isSpicy: true,
-      isCreamy: true,
-    },
-  });
+  const params: unknown[] = [refVectorLiteral, recipeId];
+  const whereClauses = [
+    `recipe_id <> $2`,
+    `computed_by_ruleset_version = 2`,
+    `sensory_vector IS NOT NULL`,
+    `array_length(sensory_profile, 1) > 0`,
+  ];
+  if (courseFilter) {
+    params.push(courseFilter);
+    whereClauses.push(`course_type = $${params.length}`);
+  }
+  params.push(candidatePool);
+
+  const sql = `
+    SELECT
+      recipe_id          AS "recipeId",
+      recipe_title       AS "recipeTitle",
+      sensory_profile    AS "sensoryProfile",
+      harmony_score_universal AS "harmonyScoreUniversal",
+      detected_emergences AS "detectedEmergences",
+      dominant_archetype  AS "dominantArchetype",
+      cuisine_tags        AS "cuisineTags",
+      course_type         AS "courseType",
+      is_rich    AS "isRich",
+      is_crunchy AS "isCrunchy",
+      is_spicy   AS "isSpicy",
+      is_creamy  AS "isCreamy",
+      1 - (sensory_vector <=> $1::vector) AS similarity
+    FROM sensory.recipe_snapshots
+    WHERE ${whereClauses.join(' AND ')}
+    ORDER BY sensory_vector <=> $1::vector
+    LIMIT $${params.length}
+  `;
+
+  type Row = {
+    recipeId: string;
+    recipeTitle: string;
+    sensoryProfile: number[];
+    harmonyScoreUniversal: number | null;
+    detectedEmergences: Array<{ name: string }> | null;
+    dominantArchetype: string | null;
+    cuisineTags: string[];
+    courseType: string | null;
+    isRich: boolean;
+    isCrunchy: boolean;
+    isSpicy: boolean;
+    isCreamy: boolean;
+    similarity: number;
+  };
+  const candidates = (await prisma.$queryRawUnsafe(sql, ...params)) as Row[];
 
   const results: MatchedRecipe[] = candidates.map((c) => {
-    const similarity = cosineSim(ref.sensoryProfile, c.sensoryProfile);
+    const similarity = c.similarity;
     const harmonyScore = c.harmonyScoreUniversal ?? 1.0;
     return {
       recipeId: c.recipeId,
@@ -328,7 +401,7 @@ export async function findSimilarRecipes(
       explanation: {
         matchingDims: [],
         archetype: c.dominantArchetype,
-        emergences: ((c.detectedEmergences as Array<{ name: string }> | null) ?? []).map((e) => e.name),
+        emergences: (c.detectedEmergences ?? []).map((e) => e.name),
         clashes: [],
         penaltyFromAvoidance: 0,
       },

@@ -39,6 +39,7 @@ export type {
   SensoryPluginConfig,
   HostAdapter,
   HostRecipe,
+  SensoryAuditEvent,
   V2Result,
   V2IngredientInput,
   V2Instruction,

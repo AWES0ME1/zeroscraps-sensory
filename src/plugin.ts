@@ -55,7 +55,7 @@ export {
   ONBOARDING_QUESTIONS,
 } from './services/user-preference';
 export { runEnhancement, findGaps } from './services/ai-enhancer';
-export type { SensoryPluginConfig, HostAdapter, HostRecipe } from './host';
+export type { SensoryPluginConfig, HostAdapter, HostRecipe, SensoryAuditEvent } from './host';
 
 export interface SensoryPlugin {
   /** Mount routes on the provided Express app. Idempotent within one plugin instance. */
